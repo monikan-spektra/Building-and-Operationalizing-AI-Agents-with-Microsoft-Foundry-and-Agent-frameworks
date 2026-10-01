@@ -1,0 +1,602 @@
+{
+  "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "adminUsername": { "type": "string" },
+    "adminPassword": { "type": "securestring" },
+    "AzureUserName": { "type": "string" },
+    "AzurePassword": { "type": "securestring" },
+    "ODLID": { "type": "string" },
+    "DeploymentID": { "type": "string" },
+    "trainerUserName": { "type": "string" },
+    "trainerUserPassword": { "type": "string" },
+    "AppID": { "type": "string" },
+    "AppSecret": { "type": "string" },
+    "AzureUserObjectID": { "type": "string" }
+  },
+  "variables": {
+    "AzureSubscriptionID": "[subscription().subscriptionId]",
+    "AzureTenantID": "[subscription().tenantId]",
+    "foundryAccountName": "[concat('aifoundry-', parameters('DeploymentID'))]",
+    "aiProjectName": "[concat('project-', parameters('DeploymentID'))]",
+    "searchServiceName": "[concat('ai-search-', parameters('DeploymentID'))]",
+    "appInsightsName": "[concat('app-insights-', parameters('DeploymentID'))]",
+    "logAnalyticsName": "[concat('applogs', parameters('DeploymentID'))]",
+    "storageAccountName": "[toLower(concat('aistorage', parameters('DeploymentID')))]",
+    "blobContainerName": "datasets",
+    "bingResourceName": "[concat('bing-', parameters('DeploymentID'))]",
+    "searchConnectionName": "[concat('aisearch-', parameters('DeploymentID'))]",
+    "bingConnectionName": "[concat('bing-', parameters('DeploymentID'))]",
+    "appInsightsConnectionName": "[concat('appinsights-', parameters('DeploymentID'))]",
+    "cloudlabsCommon": "[concat(' -AzureUserName ', parameters('AzureUserName'), ' -AzurePassword ', parameters('AzurePassword'), ' -AzureTenantID ', variables('AzureTenantID'), ' -AzureSubscriptionID ', variables('AzureSubscriptionID'), ' -ODLID ', parameters('ODLID'), ' -DeploymentID ', parameters('DeploymentID'), ' -AppID ', parameters('AppID'), ' -AppSecret ', parameters('AppSecret'), ' -AzureUserObjectID ', parameters('AzureUserObjectID'), ' -foundryAccountName ', variables('foundryAccountName'), ' -aiProjectName ', variables('aiProjectName'), ' -searchServiceName ', variables('searchServiceName'), ' -appInsightsName ', variables('appInsightsName'), ' -logAnalyticsName ', variables('logAnalyticsName'), ' -storageAccountName ', variables('storageAccountName'), ' -blobContainerName ', variables('blobContainerName'), ' -bingResourceName ', variables('bingResourceName'), ' -searchConnectionName ', variables('searchConnectionName'), ' -bingConnectionName ', variables('bingConnectionName'), ' -appInsightsConnectionName ', variables('appInsightsConnectionName'))]",
+    "Enable-CloudLabsEmbeddedShadow": "[concat(' -vmAdminUsername ', parameters('adminUsername'), ' -vmAdminPassword ', parameters('adminPassword'), ' -trainerUserName ', parameters('trainerUserName'), ' -trainerUserPassword ', parameters('trainerUserPassword'))]",
+    "winVmName": "[concat('VM-', parameters('DeploymentID'))]",
+    "vmSize": "Standard_D2s_v3",
+    "nicName": "[concat(variables('winVmName'), '-nic')]",
+    "publicIpName": "[concat('labvmip', uniqueString(resourceGroup().id))]",
+    "publicIpDnsLabel": "[concat('agenticai', uniqueString(resourceGroup().id, parameters('DeploymentID')))]",
+    "nsgName": "nsg",
+    "vnetName": "vnet",
+    "vnetId": "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]",
+    "subnetRef": "[concat(variables('vnetId'), '/subnets/subnet')]",
+    "publicIpAddressDNSName": "[concat('labvm', uniqueString(resourceGroup().id))]",
+    "location": "[resourceGroup().location]"
+
+  },
+  "resources": [
+    {
+      "type": "Microsoft.CognitiveServices/accounts",
+      "apiVersion": "2025-04-01-preview",
+      "name": "[variables('foundryAccountName')]",
+      "location": "[variables('location')]",
+      "kind": "AIServices",
+      "sku": { "name": "S0" },
+      "identity": { "type": "SystemAssigned" },
+      "properties": {
+        "customSubDomainName": "[variables('foundryAccountName')]",
+        "defaultProjectName": "[toLower(variables('aiProjectName'))]",
+        "publicNetworkAccess": "Enabled",
+        "networkAcls": { "defaultAction": "Allow" },
+        "allowProjectManagement": true
+      },
+      "tags": {
+        "lab": "Microsoft Foundry Agents Frameworks Workshop",
+        "project": "[variables('aiProjectName')]"
+      },
+      "resources": [
+        {
+          "type": "projects",
+          "apiVersion": "2025-04-01-preview",
+          "name": "[toLower(variables('aiProjectName'))]",
+          "location": "[variables('location')]",
+          "identity": { "type": "SystemAssigned" },
+          "sku": { "name": "S0" },
+          "properties": {
+            "displayName": "[variables('aiProjectName')]",
+            "description": "Default project created with the AI Foundry resource"
+          },
+          "dependsOn": [
+            "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName'))]"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts/deployments",
+      "apiVersion": "2023-05-01",
+      "name": "[concat(variables('foundryAccountName'), '/gpt-5-mini')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName'))]",
+        "[resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), toLower(variables('aiProjectName')))]"
+      ],
+      "sku": {
+        "name": "GlobalStandard",
+        "capacity": 100
+      },
+      "properties": {
+        "model": {
+          "format": "OpenAI",
+          "name": "gpt-5-mini",
+          "version": "2025-08-07"
+        },
+        "versionUpgradeOption": "OnceNewDefaultVersionAvailable"
+      }
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts/deployments",
+      "apiVersion": "2023-05-01",
+      "name": "[concat(variables('foundryAccountName'), '/gpt-5')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName'))]",
+        "[resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), toLower(variables('aiProjectName')))]",
+        "[resourceId('Microsoft.CognitiveServices/accounts/deployments', variables('foundryAccountName'), 'gpt-5-mini')]"
+      ],
+      "sku": {
+        "name": "GlobalStandard",
+        "capacity": 100
+      },
+      "properties": {
+        "model": {
+          "format": "OpenAI",
+          "name": "gpt-5",
+          "version": "2025-08-07"
+        },
+        "versionUpgradeOption": "OnceNewDefaultVersionAvailable"
+      }
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts/deployments",
+      "apiVersion": "2023-05-01",
+      "name": "[concat(variables('foundryAccountName'), '/text-embedding-3-large')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName'))]",
+        "[resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), toLower(variables('aiProjectName')))]",
+        "[resourceId('Microsoft.CognitiveServices/accounts/deployments', variables('foundryAccountName'), 'gpt-5-mini')]",
+        "[resourceId('Microsoft.CognitiveServices/accounts/deployments', variables('foundryAccountName'), 'gpt-5')]"
+      ],
+      "sku": {
+        "name": "GlobalStandard",
+        "capacity": 100
+      },
+      "properties": {
+        "model": {
+          "format": "OpenAI",
+          "name": "text-embedding-3-large",
+          "version": "1"
+        },
+        "versionUpgradeOption": "OnceNewDefaultVersionAvailable"
+      }
+    },
+    {
+      "type": "Microsoft.Search/searchServices",
+      "apiVersion": "2023-11-01",
+      "name": "[variables('searchServiceName')]",
+      "location": "[variables('location')]",
+      "sku": { "name": "standard" },
+      "properties": {
+        "replicaCount": 1,
+        "partitionCount": 1,
+        "hostingMode": "default",
+        "authOptions": {
+          "aadOrApiKey": {
+            "aadAuthFailureMode": "http401WithBearerChallenge"
+          }
+        }
+      },
+      "tags": { "lab": "Microsoft Foundry Agents Frameworks Workshop" }
+    },
+    {
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2022-10-01",
+      "name": "[variables('logAnalyticsName')]",
+      "location": "[variables('location')]",
+      "properties": {
+        "retentionInDays": 30,
+        "features": { "searchVersion": 1 }
+      },
+      "sku": { "name": "PerGB2018" },
+      "tags": { "lab": "Microsoft Foundry Agents Frameworks Workshop" }
+    },
+    {
+      "type": "Microsoft.Insights/components",
+      "apiVersion": "2020-02-02",
+      "name": "[variables('appInsightsName')]",
+      "location": "[variables('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces', variables('logAnalyticsName'))]"
+      ],
+      "kind": "web",
+      "properties": {
+        "Application_Type": "web",
+        "Flow_Type": "Bluefield",
+        "Request_Source": "rest",
+        "WorkspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', variables('logAnalyticsName'))]"
+      },
+      "tags": { "lab": "Microsoft Foundry Agents Frameworks Workshop" }
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts/connections",
+      "apiVersion": "2025-04-01-preview",
+      "name": "[concat(variables('foundryAccountName'), '/', variables('appInsightsConnectionName'))]",
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName'))]",
+        "[resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), toLower(variables('aiProjectName')))]",
+        "[resourceId('Microsoft.Insights/components', variables('appInsightsName'))]"
+      ],
+      "properties": {
+        "category": "AppInsights",
+        "target": "[resourceId('Microsoft.Insights/components', variables('appInsightsName'))]",
+        "authType": "ApiKey",
+        "isSharedToAll": true,
+        "credentials": {
+          "key": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName')), '2020-02-02').ConnectionString]"
+        },
+        "metadata": {
+          "ApiType": "Azure",
+          "ResourceId": "[resourceId('Microsoft.Insights/components', variables('appInsightsName'))]"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-01-01",
+      "name": "[variables('storageAccountName')]",
+      "location": "[variables('location')]",
+      "sku": {
+        "name": "Standard_LRS",
+        "tier": "Standard"
+      },
+      "kind": "StorageV2",
+      "properties": {
+        "allowBlobPublicAccess": true,
+        "allowSharedKeyAccess": true,
+        "minimumTlsVersion": "TLS1_2",
+        "networkAcls": {
+          "bypass": "AzureServices",
+          "virtualNetworkRules": [],
+          "ipRules": [],
+          "defaultAction": "Allow"
+        },
+        "supportsHttpsTrafficOnly": true,
+        "encryption": {
+          "services": {
+            "file": {
+              "keyType": "Account",
+              "enabled": true
+            },
+            "blob": {
+              "keyType": "Account",
+              "enabled": true
+            }
+          },
+          "keySource": "Microsoft.Storage"
+        },
+        "accessTier": "Hot"
+      },
+      "tags": { "lab": "Microsoft Foundry Agents Frameworks Workshop" }
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices",
+      "apiVersion": "2021-08-01",
+      "name": "[format('{0}/{1}', variables('storageAccountName'), 'default')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+      "apiVersion": "2021-08-01",
+      "name": "[format('{0}/{1}/{2}', variables('storageAccountName'), 'default', variables('blobContainerName'))]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('storageAccountName'), 'default')]",
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2018-02-01",
+      "name": "[variables('vnetName')]",
+      "location": "[variables('location')]",
+      "properties": {
+        "addressSpace": { "addressPrefixes": [ "10.0.0.0/16" ] },
+        "subnets": [
+          {
+            "name": "subnet",
+            "properties": { "addressPrefix": "10.0.0.0/24" }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/publicIpAddresses",
+      "apiVersion": "2017-08-01",
+      "name": "[variables('publicIpName')]",
+      "location": "[variables('location')]",
+      "sku": {
+        "name": "Standard"
+      },
+      "properties": {
+        "publicIpAllocationMethod": "Static",
+        "dnsSettings": {
+          "domainNameLabel": "[concat(variables('publicIpAddressDNSName'))]"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "apiVersion": "2017-06-01",
+      "name": "[variables('nsgName')]",
+      "location": "[variables('location')]",
+      "properties": {
+        "securityRules": [
+          {
+            "name": "default-allow-rdp",
+            "properties": {
+              "priority": 1000,
+              "protocol": "TCP",
+              "access": "Allow",
+              "direction": "Inbound",
+              "sourceAddressPrefix": "*",
+              "sourcePortRange": "*",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "3389"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/networkInterfaces",
+      "apiVersion": "2016-09-01",
+      "name": "[variables('nicName')]",
+      "location": "[variables('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]",
+        "[resourceId('Microsoft.Network/publicIPAddresses', variables('publicIpName'))]",
+        "[resourceId('Microsoft.Network/networkSecurityGroups', variables('nsgName'))]"
+      ],
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "subnet": { "id": "[variables('subnetRef')]" },
+              "privateIPAllocationMethod": "Dynamic",
+              "publicIpAddress": { "id": "[resourceId('Microsoft.Network/publicIPAddresses', variables('publicIpName'))]" }
+            }
+          }
+        ],
+        "networkSecurityGroup": { "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('nsgName'))]" }
+      }
+    },
+    {
+      "type": "Microsoft.Bing/accounts",
+      "apiVersion": "2020-06-10",
+      "name": "[variables('bingResourceName')]",
+      "location": "global",
+      "sku": {
+        "name": "G1"
+      },
+      "kind": "Bing.Grounding",
+      "properties": {
+        "statisticsEnabled": false
+      }
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts/connections",
+      "apiVersion": "2025-04-01-preview",
+      "name": "[concat(variables('foundryAccountName'), '/', variables('bingConnectionName'))]",
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName'))]",
+        "[resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), toLower(variables('aiProjectName')))]",
+        "[resourceId('Microsoft.Bing/accounts', variables('bingResourceName'))]"
+      ],
+      "properties": {
+        "category": "ApiKey",
+        "target": "https://api.bing.microsoft.com/",
+        "authType": "ApiKey",
+        "isSharedToAll": true,
+        "credentials": {
+          "key": "[listKeys(resourceId('Microsoft.Bing/accounts', variables('bingResourceName')), '2020-06-10').key1]"
+        },
+        "metadata": {
+          "ApiType": "Azure",
+          "Type": "bing_grounding",
+          "ResourceId": "[resourceId('Microsoft.Bing/accounts', variables('bingResourceName'))]"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts/connections",
+      "apiVersion": "2025-04-01-preview",
+      "name": "[concat(variables('foundryAccountName'), '/', variables('searchConnectionName'))]",
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName'))]",
+        "[resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), toLower(variables('aiProjectName')))]",
+        "[resourceId('Microsoft.Search/searchServices', variables('searchServiceName'))]"
+      ],
+      "properties": {
+        "category": "CognitiveSearch",
+        "target": "[concat('https://', variables('searchServiceName'), '.search.windows.net')]",
+        "authType": "ApiKey",
+        "isSharedToAll": true,
+        "credentials": {
+          "key": "[listAdminKeys(resourceId('Microsoft.Search/searchServices', variables('searchServiceName')), '2023-11-01').primaryKey]"
+        },
+        "metadata": {
+          "ApiType": "Azure",
+          "ResourceId": "[resourceId('Microsoft.Search/searchServices', variables('searchServiceName'))]",
+          "location": "[variables('location')]"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Compute/virtualMachines",
+      "apiVersion": "2017-03-30",
+      "name": "[variables('winVmName')]",
+      "location": "[variables('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkInterfaces', variables('nicName'))]"
+      ],
+      "properties": {
+        "osProfile": {
+          "computerName": "[variables('winVmName')]",
+          "adminUsername": "[parameters('adminUsername')]",
+          "adminPassword": "[parameters('adminPassword')]",
+          "windowsConfiguration": { "provisionVmAgent": "true" }
+        },
+        "hardwareProfile": { "vmSize": "[variables('vmSize')]" },
+        "storageProfile": {
+          "imageReference": {
+            "publisher": "MicrosoftWindowsServer",
+            "offer": "WindowsServer",
+            "sku": "2022-datacenter-azure-edition",
+            "version": "latest"
+          },
+          "osDisk": {
+            "createOption": "fromImage",
+            "managedDisk": { "storageAccountType": "Premium_LRS" }
+          },
+          "dataDisks": []
+        },
+        "networkProfile": {
+          "networkInterfaces": [ { "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('nicName'))]" } ]
+        }
+      },
+      "resources": [
+        {
+          "type": "extensions",
+          "apiVersion": "2015-06-15",
+          "name": "vmExtension",
+          "location": "[variables('location')]",
+          "dependsOn": [
+            "[resourceId('Microsoft.Compute/virtualMachines', variables('winVmName'))]",
+            "[resourceId('Microsoft.CognitiveServices/accounts/deployments', variables('foundryAccountName'), 'gpt-5-mini')]",
+            "[resourceId('Microsoft.CognitiveServices/accounts/deployments', variables('foundryAccountName'), 'gpt-5')]",
+            "[resourceId('Microsoft.CognitiveServices/accounts/deployments', variables('foundryAccountName'), 'text-embedding-3-large')]",
+            "[resourceId('Microsoft.Search/searchServices', variables('searchServiceName'))]",
+            "[resourceId('Microsoft.OperationalInsights/workspaces', variables('logAnalyticsName'))]",
+            "[resourceId('Microsoft.Insights/components', variables('appInsightsName'))]",
+            "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageAccountName'), 'default', variables('blobContainerName'))]",
+            "[resourceId('Microsoft.Bing/accounts', variables('bingResourceName'))]"
+          ],
+          "properties": {
+            "publisher": "Microsoft.Compute",
+            "type": "CustomScriptExtension",
+            "typeHandlerVersion": "1.8",
+            "autoUpgradeMinorVersion": true,
+            "settings": {
+              "fileUris": [
+                "https://experienceazure.blob.core.windows.net/templates/cloudlabs-common/cloudlabs-windows-functions.ps1",
+                "https://raw.githubusercontent.com/monikan-spektra/Building-and-Operationalizing-AI-Agents-with-Microsoft-Foundry-and-Agent-frameworks/refs/heads/main/psscript.ps1"
+              ],
+              "commandToExecute": "[concat('powershell.exe -ExecutionPolicy Unrestricted -File microsoft-foundry-agents-frameworks-workshop/scripts/psscript.ps1', variables('cloudlabsCommon'), ' -FoundryAccountResourceId ', resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName')), ' -FoundryAccountKey1 ', listKeys(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName')), '2023-05-01').key1, ' -FoundryAccountEndpoint ', reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName')), '2023-05-01').endpoint, ' -FoundryProjectResourceId ', resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), toLower(variables('aiProjectName'))), ' -SearchServiceResourceId ', resourceId('Microsoft.Search/searchServices', variables('searchServiceName')), ' -SearchServiceKey ', listAdminKeys(resourceId('Microsoft.Search/searchServices', variables('searchServiceName')), '2023-11-01').primaryKey, ' -SearchServiceEndpoint ', concat('https://', variables('searchServiceName'), '.search.windows.net'), ' -BingResourceId ', resourceId('Microsoft.Bing/accounts', variables('bingResourceName')), ' -BingResourceKey ', listKeys(resourceId('Microsoft.Bing/accounts', variables('bingResourceName')), '2020-06-10').key1, ' -AppInsightsConnectionString ', reference(resourceId('Microsoft.Insights/components', variables('appInsightsName')), '2020-02-02').ConnectionString, ' -SearchConnectionId ', resourceId('Microsoft.CognitiveServices/accounts/connections', variables('foundryAccountName'), variables('searchConnectionName')), ' -BingConnectionId ', resourceId('Microsoft.CognitiveServices/accounts/connections', variables('foundryAccountName'), variables('bingConnectionName')), ' -AppInsightsConnectionId ', resourceId('Microsoft.CognitiveServices/accounts/connections', variables('foundryAccountName'), variables('appInsightsConnectionName')), ' -SearchConnectionTarget ', reference(resourceId('Microsoft.CognitiveServices/accounts/connections', variables('foundryAccountName'), variables('searchConnectionName')), '2025-04-01-preview').target, ' -BingConnectionTarget ', reference(resourceId('Microsoft.CognitiveServices/accounts/connections', variables('foundryAccountName'), variables('bingConnectionName')), '2025-04-01-preview').target, ' -AppInsightsConnectionTarget ', reference(resourceId('Microsoft.CognitiveServices/accounts/connections', variables('foundryAccountName'), variables('appInsightsConnectionName')), '2025-04-01-preview').target, ' ', variables('Enable-CloudLabsEmbeddedShadow'))]"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "outputs": {
+    "DeploymentID": {
+      "type": "string",
+      "value": "[parameters('DeploymentID')]"
+    },
+    "VM Admin Username": {
+      "type": "string",
+      "value": "[parameters('adminUsername')]"
+    },
+    "VM Admin Password": {
+      "type": "string",
+      "value": "[parameters('adminPassword')]"
+    },
+    "Windows VM DNS Name": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Network/publicIPAddresses', variables('publicIpName'))).dnsSettings.fqdn]"
+    },
+    "Trainer Username": {
+      "type": "string",
+      "value": "[parameters('trainerUserName')]"
+    },
+    "Trainer Password": {
+      "type": "string",
+      "value": "[parameters('trainerUserPassword')]"
+    },
+    "AzureAIFoundryApiKey": {
+      "type": "string",
+      "value": "[listKeys(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName')), '2023-05-01').key1]"
+    },
+    "AppInsightsConnectionStringWithAppId": {
+      "type": "string",
+      "value": "[concat(reference(resourceId('Microsoft.Insights/components', variables('appInsightsName')), '2020-02-02').ConnectionString, ';ApplicationId=', reference(resourceId('Microsoft.Insights/components', variables('appInsightsName')), '2015-05-01', 'Full').properties.ApplicationId)]"
+    },
+    "StorageAccountName": {
+      "type": "string",
+      "value": "[variables('storageAccountName')]"
+    },
+    "StorageContainer": {
+      "type": "string",
+      "value": "[variables('blobContainerName')]"
+    },
+    "SearchServiceName": {
+      "type": "string",
+      "value": "[variables('searchServiceName')]"
+    },
+    "AppInsightsConnectionString": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName')), '2020-02-02').ConnectionString]"
+    },
+    "AIProjectName": {
+      "type": "string",
+      "value": "[variables('aiProjectName')]"
+    },
+    "FoundryAccountResourceId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName'))]"
+    },
+    "FoundryAccountKey1": {
+      "type": "string",
+      "value": "[listKeys(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName')), '2023-05-01').key1]"
+    },
+    "FoundryAccountKey2": {
+      "type": "string",
+      "value": "[listKeys(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName')), '2023-05-01').key2]"
+    },
+    "FoundryAccountEndpoint": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName')), '2023-05-01').endpoint]"
+    },
+    "FoundryProjectResourceId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), toLower(variables('aiProjectName')))]"
+    },
+    "SearchServiceResourceId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Search/searchServices', variables('searchServiceName'))]"
+    },
+    "SearchServiceKey": {
+      "type": "string",
+      "value": "[listAdminKeys(resourceId('Microsoft.Search/searchServices', variables('searchServiceName')), '2023-11-01').primaryKey]"
+    },
+    "SearchServiceEndpoint": {
+      "type": "string",
+      "value": "[concat('https://', variables('searchServiceName'), '.search.windows.net')]"
+    },
+    "BingResourceId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Bing/accounts', variables('bingResourceName'))]"
+    },
+    "BingResourceKey": {
+      "type": "string",
+      "value": "[listKeys(resourceId('Microsoft.Bing/accounts', variables('bingResourceName')), '2020-06-10').key1]"
+    },
+    "SearchConnectionName": {
+      "type": "string",
+      "value": "[variables('searchConnectionName')]"
+    },
+    "SearchConnectionId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.CognitiveServices/accounts/connections', variables('foundryAccountName'), variables('searchConnectionName'))]"
+    },
+    "BingConnectionId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.CognitiveServices/accounts/connections', variables('foundryAccountName'), variables('bingConnectionName'))]"
+    },
+    "AppInsightsConnectionId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.CognitiveServices/accounts/connections', variables('foundryAccountName'), variables('appInsightsConnectionName'))]"
+    },
+    "SearchConnectionReference": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts/connections', variables('foundryAccountName'), variables('searchConnectionName')), '2025-04-01-preview', 'Full').properties.target]"
+    },
+    "BingConnectionReference": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts/connections', variables('foundryAccountName'), variables('bingConnectionName')), '2025-04-01-preview', 'Full').properties.target]"
+    },
+    "AppInsightsConnectionReference": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts/connections', variables('foundryAccountName'), variables('appInsightsConnectionName')), '2025-04-01-preview', 'Full').properties.target]"
+    }
+  }
+}
