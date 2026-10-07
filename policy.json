@@ -1,0 +1,79 @@
+{
+  "if": {
+    "anyOf": [
+      {
+        "allOf": [
+          {
+            "field": "type",
+            "equals": "Microsoft.CognitiveServices/accounts/deployments"
+          },
+          {
+            "not": {
+              "field": "Microsoft.CognitiveServices/accounts/deployments/model.name",
+              "in": [
+                "gpt-5",
+                "gpt-5-mini",
+                "text-embedding-3-large"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "allOf": [
+          {
+            "field": "type",
+            "equals": "Microsoft.CognitiveServices/accounts/deployments"
+          },
+          {
+            "not": {
+              "field": "name",
+              "in": [
+                "gpt-5",
+                "gpt-5-mini",
+                "text-embedding-3-large"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "allOf": [
+          {
+            "field": "type",
+            "equals": "Microsoft.CognitiveServices/accounts/deployments"
+          },
+          {
+            "not": {
+              "field": "Microsoft.CognitiveServices/accounts/deployments/sku.name",
+              "equals": "GlobalStandard"
+            }
+          }
+        ]
+      },
+      {
+        "allOf": [
+          {
+            "field": "type",
+            "equals": "Microsoft.CognitiveServices/accounts/deployments"
+          },
+          {
+            "field": "Microsoft.CognitiveServices/accounts/deployments/model.name",
+            "in": [
+              "gpt-5",
+              "gpt-5-mini",
+              "text-embedding-3-large"
+            ]
+          },
+          {
+            "field": "Microsoft.CognitiveServices/accounts/deployments/sku.capacity",
+            "greater": 100
+          }
+        ]
+      }
+    ]
+  },
+  "then": {
+    "effect": "deny"
+  }
+}
