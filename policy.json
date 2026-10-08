@@ -1,133 +1,124 @@
-# --- Pre-set variables ---
-$subscriptionId       = $sysAddedSubscriptionId
-$resourceGroupName    = "ai-foundry-$DeploymentId"        # <-- set this to your lab RG
-$scope                = "/subscriptions/$subscriptionId"
-$assignmentScope      = "/subscriptions/$subscriptionId/resourceGroups/$resourceGroupName"
-$apiVersion           = "2023-04-01"
-$PolicyDefinitionName = "modelrestriction-$DeploymentId"
-$AssignmentName       = "modelrestriction-$DeploymentId"
-$PolicyDisplayName    = "modelrestriction-$DeploymentId-PolicyDefinition"
-$PolicyDescription    = "foundry-iq-$DeploymentId-PolicyDefinition"
-$PolicyRuleUrl        = $url
-
-Write-Host "============================================" -ForegroundColor Cyan
-Write-Host "  Custom Policy Create + Assign (RG Scope)"   -ForegroundColor Cyan
-Write-Host "============================================" -ForegroundColor Cyan
-Write-Host ""
-
-if ([string]::IsNullOrWhiteSpace($PolicyRuleUrl)) {
-    throw "Policy rule URL (`$url) is empty."
-}
-
-# --- Verify the target resource group exists ---
-Write-Host "Validating resource group: $resourceGroupName" -ForegroundColor Yellow
-$rgCheck = Invoke-AzRestMethod -Path "$($assignmentScope)?api-version=2021-04-01" -Method GET
-if ($rgCheck.StatusCode -ne 200) {
-    throw "Resource group '$resourceGroupName' not found or inaccessible. Status: $($rgCheck.StatusCode)"
-}
-Write-Host "Resource group found." -ForegroundColor Green
-Write-Host ""
-
-# --- Fetch policy JSON from URL ---
-Write-Host "Fetching policy rule from: $PolicyRuleUrl" -ForegroundColor Yellow
-$rawPolicyRule = Invoke-RestMethod -Uri $PolicyRuleUrl -Method GET
-if ($rawPolicyRule -is [string]) {
-    $fetched = $rawPolicyRule | ConvertFrom-Json
-} else {
-    $fetched = $rawPolicyRule
-}
-
-# --- Unwrap: accept full definition (properties.policyRule), policyRule, or bare if/then ---
-$PolicyParameters = $null
-$PolicyMetadata   = $null
-
-if ($fetched.properties -and $fetched.properties.policyRule) {
-    $PolicyRule = $fetched.properties.policyRule
-    if ($fetched.properties.parameters) { $PolicyParameters = $fetched.properties.parameters }
-    if ($fetched.properties.metadata)   { $PolicyMetadata   = $fetched.properties.metadata }
-}
-elseif ($fetched.policyRule) {
-    $PolicyRule = $fetched.policyRule
-    if ($fetched.parameters) { $PolicyParameters = $fetched.parameters }
-    if ($fetched.metadata)   { $PolicyMetadata   = $fetched.metadata }
-}
-else {
-    $PolicyRule = $fetched
-}
-
-# --- Sanity check before calling Azure ---
-if (-not ($PolicyRule.if -and $PolicyRule.then)) {
-    throw "Fetched policy does not contain a valid 'if'/'then' rule."
-}
-Write-Host "Policy rule fetched successfully." -ForegroundColor Green
-Write-Host ""
-
-# --- Build policy definition payload, forcing mode = All ---
-Write-Host "Building policy definition payload..." -ForegroundColor Yellow
-$defProperties = [ordered]@{
-    displayName = $PolicyDisplayName
-    policyType  = "Custom"
-    mode        = "All"
-    description = $PolicyDescription
-    policyRule  = $PolicyRule
-}
-if ($PolicyMetadata)   { $defProperties.metadata   = $PolicyMetadata }
-if ($PolicyParameters) { $defProperties.parameters = $PolicyParameters }
-
-$policyDefBody = @{ properties = $defProperties } | ConvertTo-Json -Depth 30
-
-$policyDefResourceId = "$scope/providers/Microsoft.Authorization/policyDefinitions/$PolicyDefinitionName"
-
-# --- Create or update the policy definition (subscription scope, idempotent PUT) ---
-Write-Host "Creating/updating policy definition: $PolicyDefinitionName" -ForegroundColor Yellow
-$defResponse = Invoke-AzRestMethod -Path "$($policyDefResourceId)?api-version=$apiVersion" `
-    -Method PUT `
-    -Payload $policyDefBody
-if ($defResponse.StatusCode -notin 200,201) {
-    throw "Policy definition create/update failed. Status: $($defResponse.StatusCode) Body: $($defResponse.Content)"
-}
-Write-Host "Policy definition ready with mode = All." -ForegroundColor Green
-Write-Host ""
-
-# Short wait so the new definition is visible before assigning
-Start-Sleep -Seconds 10
-
-# --- Build and PUT the policy assignment AT RESOURCE GROUP SCOPE ---
-Write-Host "Creating policy assignment at RG scope: $AssignmentName" -ForegroundColor Yellow
-$assignmentBody = @{
-    properties = @{
-        displayName        = $AssignmentName
-        description        = $PolicyDescription
-        policyDefinitionId = $policyDefResourceId
-        enforcementMode    = "Default"
+{
+  "properties": {
+    "displayName": "Allow Approved Azure AI Models with Approved SKU and Capacity",
+    "policyType": "Custom",
+    "mode": "All",
+    "description": "Allows only approved Azure OpenAI and AI model deployments with their approved SKU and capacity of TPM",
+    "metadata": {
+      "category": "Cognitive Services",
+      "version": "1.0.0"
+    },
+    "parameters": {},
+    "policyRule": {
+      "if": {
+        "anyOf": [
+          {
+            "allOf": [
+              {
+                "field": "type",
+                "equals": "Microsoft.CognitiveServices/accounts/deployments"
+              },
+              {
+                "not": {
+                  "field": "Microsoft.CognitiveServices/accounts/deployments/model.name",
+                  "in": [
+                    "gpt-5",
+                    "gpt-5-mini",
+                    "text-embedding-3-large"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "field": "type",
+                "equals": "Microsoft.CognitiveServices/accounts/deployments"
+              },
+              {
+                "field": "Microsoft.CognitiveServices/accounts/deployments/model.name",
+                "equals": "gpt-5"
+              },
+              {
+                "anyOf": [
+                  {
+                    "not": {
+                      "field": "Microsoft.CognitiveServices/accounts/deployments/sku.name",
+                      "in": [
+                        "GlobalStandard"
+                      ]
+                    }
+                  },
+                  {
+                    "field": "Microsoft.CognitiveServices/accounts/deployments/sku.capacity",
+                    "greater": 100
+                  }
+                ]
+              }
+            ]
+          },
+           {
+            "allOf": [
+              {
+                "field": "type",
+                "equals": "Microsoft.CognitiveServices/accounts/deployments"
+              },
+              {
+                "field": "Microsoft.CognitiveServices/accounts/deployments/model.name",
+                "equals": "gpt-5-mini"
+              },
+              {
+                "anyOf": [
+                  {
+                    "not": {
+                      "field": "Microsoft.CognitiveServices/accounts/deployments/sku.name",
+                      "in": [
+                        "GlobalStandard"
+                      ]
+                    }
+                  },
+                  {
+                    "field": "Microsoft.CognitiveServices/accounts/deployments/sku.capacity",
+                    "greater": 100
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "field": "type",
+                "equals": "Microsoft.CognitiveServices/accounts/deployments"
+              },
+              {
+                "field": "Microsoft.CognitiveServices/accounts/deployments/model.name",
+                "equals": "text-embedding-3-large"
+              },
+              {
+                "anyOf": [
+                  {
+                    "not": {
+                      "field": "Microsoft.CognitiveServices/accounts/deployments/sku.name",
+                      "in": [
+                        "GlobalStandard"
+                      ]
+                    }
+                  },
+                  {
+                    "field": "Microsoft.CognitiveServices/accounts/deployments/sku.capacity",
+                    "greater": 100
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "then": {
+        "effect": "deny"
+      }
     }
-} | ConvertTo-Json -Depth 20
-
-$assignmentResourceId = "$assignmentScope/providers/Microsoft.Authorization/policyAssignments/$AssignmentName"
-
-# Retry a few times in case the definition has not propagated yet
-$maxAttempts    = 4
-$assignResponse = $null
-for ($i = 1; $i -le $maxAttempts; $i++) {
-    $assignResponse = Invoke-AzRestMethod -Path "$($assignmentResourceId)?api-version=$apiVersion" `
-        -Method PUT `
-        -Payload $assignmentBody
-    if ($assignResponse.StatusCode -in 200,201) { break }
-    if ($i -lt $maxAttempts) {
-        Write-Host "Assignment attempt $i failed (Status $($assignResponse.StatusCode)). Retrying in 15s..." -ForegroundColor DarkYellow
-        Start-Sleep -Seconds 15
-    }
+  }
 }
-if ($assignResponse.StatusCode -notin 200,201) {
-    throw "Policy assignment failed. Status: $($assignResponse.StatusCode) Body: $($assignResponse.Content)"
-}
-
-Write-Host ""
-Write-Host "============================================" -ForegroundColor Green
-Write-Host "  SUCCESS!"                                    -ForegroundColor Green
-Write-Host "============================================" -ForegroundColor Green
-Write-Host "  Policy      : $PolicyDefinitionName (mode=All)" -ForegroundColor Green
-Write-Host "  Def Scope   : $scope"                        -ForegroundColor Green
-Write-Host "  Assigned    : $AssignmentName"               -ForegroundColor Green
-Write-Host "  Assign Scope: $assignmentScope"              -ForegroundColor Green
-Write-Host ""
